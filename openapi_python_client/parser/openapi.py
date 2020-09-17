@@ -10,9 +10,9 @@ from pydantic import ValidationError
 from .. import schema as oai
 from .. import utils
 from .errors import GeneratorError, ParseError, PropertyError
-from .properties import EnumProperty, Property, property_from_data
+from .properties import EnumProperty, Property, RefProperty, property_from_data
 from .reference import Reference
-from .responses import ListRefResponse, RefResponse, Response, response_from_data
+from .responses import ListRefResponse, RefResponse, Response, UnionResponse, response_from_data
 
 
 class ParameterLocation(str, Enum):
@@ -38,7 +38,7 @@ class EndpointCollection:
     parse_errors: List[ParseError] = field(default_factory=list)
 
     @staticmethod
-    def from_data(*, data: Dict[str, oai.PathItem]) -> Dict[str, EndpointCollection]:
+    def from_data(*, data: Dict[str, oai.PathItem], base_responses: Any) -> Dict[str, EndpointCollection]:
         """ Parse the openapi paths data to get EndpointCollections by tag """
         endpoints_by_tag: Dict[str, EndpointCollection] = {}
 
@@ -51,7 +51,7 @@ class EndpointCollection:
                     continue
                 tag = (operation.tags or ["default"])[0]
                 collection = endpoints_by_tag.setdefault(tag, EndpointCollection(tag=tag))
-                endpoint = Endpoint.from_data(data=operation, path=path, method=method, tag=tag)
+                endpoint = Endpoint.from_data(data=operation, path=path, method=method, tag=tag, base_responses=base_responses)
                 if isinstance(endpoint, ParseError):
                     endpoint.header = (
                         f"ERROR parsing {method.upper()} {path} within {tag}. Endpoint will not be generated."
@@ -139,14 +139,29 @@ class Endpoint:
         return endpoint
 
     @staticmethod
-    def _add_responses(endpoint: Endpoint, data: oai.Responses) -> Union[Endpoint, ParseError]:
+    def _add_responses(endpoint: Endpoint, data: oai.Responses, base_responses: Any) -> Union[Endpoint, ParseError]:
         endpoint = deepcopy(endpoint)
-        for code, response_data in data.items():
-            response = response_from_data(status_code=int(code), data=response_data)
-            if isinstance(response, ParseError):
-                return ParseError(detail=f"cannot parse response of endpoint {endpoint.name}", data=response.data)
+
+        def process_response(response: Response):
             if isinstance(response, (RefResponse, ListRefResponse)):
                 endpoint.relative_imports.add(import_string_from_reference(response.reference, prefix="..models"))
+            elif isinstance(response, UnionResponse):
+                for opt in response.options:
+                    process_response(opt)
+
+        for code, response_data in data.items():
+            try:
+                code = int(code)
+            except ValueError:
+                assert (
+                    (len(code) == 3 and code.endswith('XX')) or
+                    code == 'default'
+                )
+                code = f'"{code}"'
+            response = response_from_data(status_code=code, data=response_data, base_responses=base_responses)
+            if isinstance(response, ParseError):
+                return ParseError(detail=f"cannot parse response of endpoint {endpoint.name}", data=response.data)
+            process_response(response)
             endpoint.responses.append(response)
         return endpoint
 
@@ -174,17 +189,19 @@ class Endpoint:
         return endpoint
 
     @staticmethod
-    def from_data(*, data: oai.Operation, path: str, method: str, tag: str) -> Union[Endpoint, ParseError]:
+    def from_data(*, data: oai.Operation, path: str, method: str, tag: str, base_responses: Any) -> Union[Endpoint, ParseError]:
         """ Construct an endpoint from the OpenAPI data """
 
         if data.operationId is None:
             return ParseError(data=data, detail="Path operations with operationId are not yet supported")
 
+        name = data.operationId.split('_', 1)[1]
+
         endpoint = Endpoint(
             path=path,
             method=method,
             description=utils.remove_string_escapes(data.description) if data.description else "",
-            name=data.operationId,
+            name=name,
             requires_security=bool(data.security),
             tag=tag,
         )
@@ -192,13 +209,14 @@ class Endpoint:
         result = Endpoint._add_parameters(endpoint, data)
         if isinstance(result, ParseError):
             return result
-        result = Endpoint._add_responses(result, data.responses)
+        result = Endpoint._add_responses(result, data.responses, base_responses=base_responses)
         if isinstance(result, ParseError):
             return result
         result = Endpoint._add_body(result, data)
 
         return result
 
+ALL_MODELS: Dict[Reference, 'Model'] = {}
 
 @dataclass
 class Model:
@@ -213,6 +231,9 @@ class Model:
     optional_properties: List[Property]
     description: str
     relative_imports: Set[str]
+    inherits: Optional[Reference]
+    is_error: bool
+    is_union: bool = False
 
     @staticmethod
     def from_data(*, data: oai.Schema, name: str) -> Union[Model, ParseError]:
@@ -230,7 +251,22 @@ class Model:
 
         ref = Reference.from_ref(data.title or name)
 
-        for key, value in (data.properties or {}).items():
+        inherits = None
+        props = data.properties
+        if not props and data.allOf:
+            assert len(data.allOf) == 2
+            assert isinstance(data.allOf[0], oai.Reference)
+            assert isinstance(data.allOf[1], oai.Schema)
+            inherits = Reference.from_ref(ref=data.allOf[0].ref)
+            relative_imports.add(f"from .{inherits.module_name} import {inherits.class_name}")
+            props = data.allOf[1].properties
+        elif not props:
+            breakpoint()
+            props = {}
+            # raise AssertionError('Found empty property!')
+
+
+        for key, value in props.items():
             required = key in required_set
             p = property_from_data(name=key, required=required, data=value)
             if isinstance(p, ParseError):
@@ -239,6 +275,7 @@ class Model:
                 required_properties.append(p)
             else:
                 optional_properties.append(p)
+
             relative_imports.update(p.get_imports(prefix=""))
 
         model = Model(
@@ -247,9 +284,29 @@ class Model:
             optional_properties=optional_properties,
             relative_imports=relative_imports,
             description=data.description or "",
+            inherits=inherits,
+            is_error=getattr(data, 'x-is-error', False),
         )
+        ALL_MODELS[ref] = model
         return model
 
+@dataclass
+class MyUnion:
+    reference: Reference
+    joins: List[Model]
+    relative_imports: t.List[str]
+    is_union: bool = True
+
+    @staticmethod
+    def from_data(*, data: oai.Schema, name: str) -> Union[MyUnion]:
+        ref = Reference.from_ref(data.title or name)
+        name = data.title or name
+
+        return MyUnion(
+            reference=ref,
+            joins=[Model.from_data(data=opt, name=f'{name}_{idx + 1}') for idx, opt in enumerate(data.anyOf)],
+            relative_imports=[]
+        )
 
 @dataclass
 class Schemas:
@@ -276,7 +333,10 @@ class Schemas:
                     nullable=data.nullable,
                 )
                 continue
-            s = Model.from_data(data=data, name=name)
+            if data.anyOf:
+                s = MyUnion.from_data(data=data, name=name)
+            else:
+                s = Model.from_data(data=data, name=name)
             if isinstance(s, ParseError):
                 result.errors.append(s)
             else:
@@ -306,7 +366,7 @@ class GeneratorData:
             schemas = Schemas()
         else:
             schemas = Schemas.build(schemas=openapi.components.schemas)
-        endpoint_collections_by_tag = EndpointCollection.from_data(data=openapi.paths)
+        endpoint_collections_by_tag = EndpointCollection.from_data(data=openapi.paths, base_responses=openapi.components.responses)
         enums = EnumProperty.get_all_enums()
 
         return GeneratorData(

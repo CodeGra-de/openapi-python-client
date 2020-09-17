@@ -12,36 +12,38 @@ if {{ parameter.python_name }} is not None:
 {% endmacro %}
 
 {% macro query_params(endpoint) %}
-{% if endpoint.query_parameters %}
-    {% for property in endpoint.query_parameters %}
-        {% set destination = "json_" + property.python_name %}
-        {% if property.template %}
-            {% from "property_templates/" + property.template import transform %}
+{% for property in endpoint.query_parameters %}
+    {% set destination = "json_" + property.python_name %}
+    {% if property.template %}
+        {% from "property_templates/" + property.template import transform %}
 {{ transform(property, property.python_name, destination) }}
-        {% endif %}
-    {% endfor %}
+    {% endif %}
+{% endfor %}
 params: Dict[str, Any] = {
-    {% for property in endpoint.query_parameters %}
-        {% if property.required %}
-            {% if property.template %}
+    'no_course_in_assignment': 'true',
+    'no_role_name': 'true',
+    'no_assignment_in_case': 'true',
+    'extended': 'true',
+{% for property in endpoint.query_parameters %}
+    {% if property.required %}
+        {% if property.template %}
     "{{ property.name }}": {{ "json_" + property.python_name }},
-            {% else %}
+        {% else %}
     "{{ property.name }}": {{ property.python_name }},
-            {% endif %}
         {% endif %}
-    {% endfor %}
+    {% endif %}
+{% endfor %}
 }
-    {% for property in endpoint.query_parameters %}
-        {% if not property.required %}
+{% for property in endpoint.query_parameters %}
+    {% if not property.required %}
 if {{ property.python_name }} is not None:
-            {% if property.template %}
+        {% if property.template %}
     params["{{ property.name }}"] = {{ "json_" + property.python_name }}
-            {% else %}
+        {% else %}
     params["{{ property.name }}"] = {{ property.python_name }}
-            {% endif %}
         {% endif %}
-    {% endfor %}
-{% endif %}
+    {% endif %}
+{% endfor %}
 {% endmacro %}
 
 {% macro json_body(endpoint) %}
@@ -61,7 +63,9 @@ if {{ property.python_name }} is not None:
 {% else %}
 ) -> Union[
     {% for response in endpoint.responses %}
+    {% if not response.is_error %}
     {{ response.return_string() }}{{ "," if not loop.last }}
+    {% endif %}
     {% endfor %}
 ]:
 {% endif %}

@@ -1,10 +1,13 @@
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 import httpx
 
-from ..client import AuthenticatedClient, Client
 from ..errors import ApiResponseError
+from ..utils import response_code_matches
+
+if TYPE_CHECKING:
+    from ..client import AuthenticatedClient, Client
 
 {% for relative in collection.relative_imports %}
 {{ relative }}
@@ -17,9 +20,9 @@ async def {{ endpoint.name | snakecase }}(
     *,
     {# Proper client based on whether or not the endpoint requires authentication #}
     {% if endpoint.requires_security %}
-    client: AuthenticatedClient,
+    client: 'AuthenticatedClient',
     {% else %}
-    client: Client,
+    client: 'Client',
     {% endif %}
     {# path parameters #}
     {% for parameter in endpoint.path_parameters %}
@@ -78,7 +81,7 @@ async def {{ endpoint.name | snakecase }}(
         )
 
     {% for response in endpoint.responses %}
-    if response.status_code == {{ response.status_code }}:
+    if response_code_matches(response.status_code, {{ response.status_code }}):
         return {{ response.constructor() }}
     {% endfor %}
     else:

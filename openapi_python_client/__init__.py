@@ -90,6 +90,7 @@ class Project:
     def __init__(self, *, openapi: GeneratorData) -> None:
         self.openapi: GeneratorData = openapi
         self.env: Environment = Environment(loader=PackageLoader(__package__), trim_blocks=True, lstrip_blocks=True)
+        self.env.filters['snake_case'] = utils.snake_case
 
         self.project_name: str = self.project_name_override or f"{utils.kebab_case(openapi.title).lower()}-client"
         self.project_dir: Path = Path.cwd() / self.project_name
@@ -155,6 +156,10 @@ class Project:
         pytyped = self.package_dir / "py.typed"
         pytyped.write_text("# Marker file for PEP 561")
 
+        utils_template = self.env.get_template("utils.py")
+        utils_path = self.package_dir / "utils.py"
+        utils_path.write_text(utils_template.render())
+
     def _build_metadata(self) -> None:
         # Create a pyproject.toml file
         pyproject_template = self.env.get_template("pyproject.toml")
@@ -196,6 +201,7 @@ class Project:
         model_template = self.env.get_template("model.pyi")
         for model in self.openapi.schemas.models.values():
             module_path = models_dir / f"{model.reference.module_name}.py"
+            assert not module_path.is_file()
             module_path.write_text(model_template.render(model=model))
             imports.append(import_string_from_reference(model.reference))
 
@@ -213,13 +219,13 @@ class Project:
         # Generate Client
         client_path = self.package_dir / "client.py"
         client_template = self.env.get_template("client.pyi")
-        client_path.write_text(client_template.render())
+        client_path.write_text(client_template.render(package_name=self.package_name, all_collections=self.openapi.endpoint_collections_by_tag))
 
         # Generate endpoints
         api_dir = self.package_dir / "api"
         api_dir.mkdir()
         api_init = api_dir / "__init__.py"
-        api_init.write_text('""" Contains synchronous methods for accessing the API """')
+        api_init.write_text('""" Contains synchronous methods for accessing the API """\n\n')
 
         async_api_dir = self.package_dir / "async_api"
         async_api_dir.mkdir()
@@ -235,6 +241,11 @@ class Project:
         for tag, collection in self.openapi.endpoint_collections_by_tag.items():
             tag = utils.snake_case(tag)
             module_path = api_dir / f"{tag}.py"
+            assert not module_path.is_file()
             module_path.write_text(endpoint_template.render(collection=collection))
             async_module_path = async_api_dir / f"{tag}.py"
             async_module_path.write_text(async_endpoint_template.render(collection=collection))
+
+            for f in [api_init, async_api_init]:
+                with f.open('a') as add:
+                    add.write(f'from . import {tag}\n')

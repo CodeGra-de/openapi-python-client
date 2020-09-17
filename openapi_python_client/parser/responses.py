@@ -1,5 +1,5 @@
 from dataclasses import InitVar, dataclass, field
-from typing import Union
+from typing import Any, List, Union
 
 from .. import schema as oai
 from .errors import ParseError
@@ -10,7 +10,11 @@ from .reference import Reference
 class Response:
     """ Describes a single response for an endpoint """
 
-    status_code: int
+    status_code: Union[int, str]
+
+    @property
+    def is_error(self) -> bool:
+        return False
 
     def return_string(self) -> str:
         """ How this Response should be represented as a return type """
@@ -19,6 +23,17 @@ class Response:
     def constructor(self) -> str:
         """ How the return value of this response should be constructed """
         return "None"
+
+
+    def __gt__(self, other: Any) -> bool:
+        if isinstance(self, RefResponse):
+            return True
+        return False
+
+    def __lt__(self, other: Any) -> bool:
+        if isinstance(self, RefResponse):
+            return False
+        return True
 
 
 @dataclass
@@ -42,6 +57,10 @@ class RefResponse(Response):
 
     reference: Reference
 
+    @property
+    def is_error(self) -> bool:
+        return self.reference.lookup().is_error
+
     def return_string(self) -> str:
         """ How this Response should be represented as a return type """
         return self.reference.class_name
@@ -49,6 +68,11 @@ class RefResponse(Response):
     def constructor(self) -> str:
         """ How the return value of this response should be constructed """
         return f"{self.reference.class_name}.from_dict(cast(Dict[str, Any], response.json()))"
+
+    def __lt__(self, other: Any) -> bool:
+        if not isinstance(other, RefResponse):
+            return NotImplemented
+        return len(self.reference.class_name) < len(other.reference.class_name)
 
 
 @dataclass
@@ -71,6 +95,21 @@ class ListBasicResponse(Response):
 
 
 @dataclass
+class UnionResponse(Response):
+
+    options: List[Response]
+
+    def __post_init__(self) -> None:
+        self.options = sorted(self.options, reverse=True)
+
+    def return_string(self) -> str:
+        return f'Union[{", ".join(opt.return_string() for opt in self.options)}]'
+
+    def constructor(self) -> str:
+        return f'try_any([{", ".join("lambda: " + opt.constructor() for opt in self.options)}])'
+
+
+@dataclass
 class BasicResponse(Response):
     """ Response is a basic type """
 
@@ -87,6 +126,19 @@ class BasicResponse(Response):
     def constructor(self) -> str:
         """ How the return value of this response should be constructed """
         return f"{self.python_type}(response.text)"
+
+
+@dataclass
+class ObjectResponse(Response):
+    """ Response is a basic type """
+
+    def return_string(self) -> str:
+        """ How this Response should be represented as a return type """
+        return 'Dict[str, Any]'
+
+    def constructor(self) -> str:
+        """ How the return value of this response should be constructed """
+        return 'response.json()'
 
 
 @dataclass
@@ -112,10 +164,13 @@ openapi_types_to_python_type_strings = {
 }
 
 
-def response_from_data(*, status_code: int, data: Union[oai.Response, oai.Reference]) -> Union[Response, ParseError]:
+def response_from_data(*, status_code: int, data: Union[oai.Response, oai.Reference], base_responses: Any) -> Union[Response, ParseError]:
     """ Generate a Response from the OpenAPI dictionary representation of it """
 
-    if isinstance(data, oai.Reference) or data.content is None:
+    if isinstance(data, oai.Reference):
+        data = base_responses[Reference.from_ref(data.ref).class_name]
+
+    if data.content is None:
         return Response(status_code=status_code)
 
     content = data.content
@@ -133,7 +188,17 @@ def response_from_data(*, status_code: int, data: Union[oai.Response, oai.Refere
     if isinstance(schema_data, oai.Reference):
         return RefResponse(status_code=status_code, reference=Reference.from_ref(schema_data.ref),)
     response_type = schema_data.type
+    if schema_data.anyOf:
+        options = []
+        for option in schema_data.anyOf:
+            if isinstance(option, oai.Reference):
+                options.append(RefResponse(status_code=status_code, reference=Reference.from_ref(option.ref)))
+            elif getattr(option, 'type', None) == 'object':
+                options.append(ObjectResponse(status_code=status_code))
+        return UnionResponse(status_code, options)
+
     if response_type is None:
+        breakpoint()
         return Response(status_code=status_code)
     if response_type == "array" and isinstance(schema_data.items, oai.Reference):
         return ListRefResponse(status_code=status_code, reference=Reference.from_ref(schema_data.items.ref),)

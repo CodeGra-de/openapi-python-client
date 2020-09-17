@@ -21,6 +21,7 @@ def _process_config(path: Optional[pathlib.Path]) -> None:
     from .config import Config
 
     if not path:
+        Config.load_config()
         return
 
     try:

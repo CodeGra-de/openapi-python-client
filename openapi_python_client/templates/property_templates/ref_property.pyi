@@ -10,8 +10,8 @@ if {{ source }} is not None:
 
 {% macro transform(property, source, destination) %}
 {% if property.required %}
-{{ destination }} = {{ source }}.to_dict()
+{{ destination }} = maybe_to_dict({{ source }})
 {% else %}
-{{ destination }} = {{ source }}.to_dict() if {{ source }} else None
+{{ destination }} = maybe_to_dict({{ source }}) if {{ source }} else None
 {% endif %}
 {% endmacro %}

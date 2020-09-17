@@ -1,10 +1,13 @@
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union, cast
 
 import httpx
 
-from ..client import AuthenticatedClient, Client
 from ..errors import ApiResponseError
+from ..utils import maybe_to_dict, response_code_matches, to_multipart, try_any
+
+if TYPE_CHECKING:
+    from ..client import AuthenticatedClient, Client
 
 {% for relative in collection.relative_imports %}
 {{ relative }}
@@ -14,12 +17,19 @@ from ..errors import ApiResponseError
 {% from "endpoint_macros.pyi" import header_params, query_params, json_body, return_type %}
 
 def {{ endpoint.name | snakecase }}(
+    {% if endpoint.json_body %}
+    json_body: {{ endpoint.json_body.get_type_string() }},
+    {% endif %}
+    {# Multipart data if any #}
+    {% if endpoint.multipart_body_reference %}
+    multipart_data: {{ endpoint.multipart_body_reference.class_name }},
+    {% endif %}
     *,
     {# Proper client based on whether or not the endpoint requires authentication #}
     {% if endpoint.requires_security %}
-    client: AuthenticatedClient,
+    client: 'AuthenticatedClient',
     {% else %}
-    client: Client,
+    client: 'Client',
     {% endif %}
     {# path parameters #}
     {% for parameter in endpoint.path_parameters %}
@@ -29,14 +39,6 @@ def {{ endpoint.name | snakecase }}(
     {% if endpoint.form_body_reference %}
     form_data: {{ endpoint.form_body_reference.class_name }},
     {% endif %}
-    {# Multipart data if any #}
-    {% if endpoint.multipart_body_reference %}
-    multipart_data: {{ endpoint.multipart_body_reference.class_name }},
-    {% endif %}
-    {# JSON body if any #}
-    {% if endpoint.json_body %}
-    json_body: {{ endpoint.json_body.get_type_string() }},
-    {% endif %}
     {# query parameters #}
     {% for parameter in endpoint.query_parameters %}
     {{ parameter.to_string() }},
@@ -44,6 +46,7 @@ def {{ endpoint.name | snakecase }}(
     {% for parameter in endpoint.header_parameters %}
     {{ parameter.to_string() }},
     {% endfor %}
+    extra_parameters: Mapping[str, str] = None,
 {{ return_type(endpoint) }}
     """ {{ endpoint.description }} """
     url = "{}{{ endpoint.path }}".format(
@@ -57,9 +60,10 @@ def {{ endpoint.name | snakecase }}(
     {{ header_params(endpoint) | indent(4) }}
 
     {{ query_params(endpoint) | indent(4) }}
+    if extra_parameters:
+        params.update(extra_parameters)
 
     {{ json_body(endpoint) | indent(4) }}
-
 
     response = httpx.{{ endpoint.method }}(
         url=url,
@@ -67,20 +71,22 @@ def {{ endpoint.name | snakecase }}(
         {% if endpoint.form_body_reference %}
         data=asdict(form_data),
         {% endif %}
-         {% if endpoint.multipart_body_reference %}
-        files=multipart_data.to_dict(),
+        {% if endpoint.multipart_body_reference %}
+        files=to_multipart(multipart_data.to_dict()),
         {% endif %}
         {% if endpoint.json_body %}
         json={{ "json_" + endpoint.json_body.python_name }},
         {% endif %}
-        {% if endpoint.query_parameters %}
         params=params,
-        {% endif %}
     )
 
     {% for response in endpoint.responses %}
-    if response.status_code == {{ response.status_code }}:
+    if response_code_matches(response.status_code, {{ response.status_code }}):
+        {% if response.is_error %}
+        raise {{ response.constructor() }}
+        {% else %}
         return {{ response.constructor() }}
+        {% endif %}
     {% endfor %}
     else:
         raise ApiResponseError(response=response)

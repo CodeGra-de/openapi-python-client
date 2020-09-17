@@ -77,9 +77,9 @@ class Property:
             default = None
 
         if default is not None:
-            return f"{self.python_name}: {self.get_type_string()} = {self.default}"
+            return f"{self.python_name}: '{self.get_type_string()}' = {self.default}"
         else:
-            return f"{self.python_name}: {self.get_type_string()}"
+            return f"{self.python_name}: '{self.get_type_string()}'"
 
 
 @dataclass
@@ -483,7 +483,10 @@ def _property_from_data(
         return UnionProperty(
             name=name, required=required, default=data.default, inner_properties=sub_properties, nullable=data.nullable,
         )
+    if data.allOf and len(data.allOf) == 1:
+        return _property_from_data(name, required, data.allOf[0])
     if not data.type:
+        breakpoint()
         return PropertyError(data=data, detail="Schemas must either have one of enum, anyOf, or type defined.")
     if data.type == "string":
         return _string_based_property(name=name, required=required, data=data)

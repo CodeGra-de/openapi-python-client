@@ -3,19 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import TYPE_CHECKING, Dict
 
 from .. import utils
+
+if TYPE_CHECKING:
+    from .openapi import Model
 
 class_overrides: Dict[str, Reference] = {}
 
 
-@dataclass
+
+@dataclass(frozen=True)
 class Reference:
     """ A reference to a class which will be in models """
 
     class_name: str
     module_name: str
+
+    def lookup(self) -> 'Model':
+        from .openapi import ALL_MODELS
+        return ALL_MODELS[self]
 
     @staticmethod
     def from_ref(ref: str) -> Reference:

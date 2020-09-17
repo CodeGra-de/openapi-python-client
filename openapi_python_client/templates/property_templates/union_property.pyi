@@ -1,6 +1,16 @@
 {% macro construct(property, source) %}
-def _parse_{{ property.python_name }}(data: Dict[str, Any]) -> {{ property.get_type_string() }}:
-    {{ property.python_name }}: {{ property.get_type_string() }}
+def _parse_{{ property.python_name }}(data: {% if property.nullable -%}
+                                      Optional[Dict[str, Any]]
+                                      {%- else -%}
+                                      Dict[str, Any]
+                                      {%- endif -%}
+) -> {{ property.get_type_string() }}:
+    {% if property.nullable %}
+    if data is None:
+        return None
+
+    {% endif %}
+    {{ property.python_name }}: {{ property.get_type_string() }} = {{ source }}
     {% for inner_property in property.inner_properties %}
     {% if inner_property.template and not loop.last %}
     try:
@@ -11,10 +21,15 @@ def _parse_{{ property.python_name }}(data: Dict[str, Any]) -> {{ property.get_t
         pass
     {% elif inner_property.template and loop.last %}{# Don't do try/except for the last one #}
     {% from "property_templates/" + inner_property.template import construct %}
-    {{ construct(inner_property, source) | indent(4) }}
+    {{ construct(inner_property, property.python_name) | indent(4) }}
     return {{ property.python_name }}
     {% else %}
-    return {{ source }}
+    if isinstance({{ property.python_name }}, {{ inner_property.get_type_string() }}):
+        return {{ property.python_name }}
+    {% if loop.last %}
+
+    raise AssertionError('Could not transform: {}'.format(property.python_name))
+    {% endif %}
     {% endif %}
     {% endfor %}
 
@@ -27,6 +42,10 @@ if {{ source }} is None:
     {{ destination }}: {{ property.get_type_string() }} = None
 {% endif %}
 {% for inner_property in property.inner_properties %}
+    {% if property.nullable %}
+if {{ source }} is None:
+    {{ destination }} = None
+    {% endif %}
     {% if loop.first and property.required %}{# No if None statement before this #}
 if isinstance({{ source }}, {{ inner_property.get_type_string(no_optional=True) }}):
     {% elif not loop.last %}

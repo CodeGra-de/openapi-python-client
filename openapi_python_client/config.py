@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -23,6 +24,11 @@ class Config(BaseModel):
 
             for class_name, class_data in self.class_overrides.items():
                 reference.class_overrides[class_name] = reference.Reference(**dict(class_data))
+
+        if self.project_name_override is None:
+            self.project_name_override = os.getenv('PROJECT_NAME_OVERRIDE')
+        if self.package_name_override is None:
+            self.package_name_override = os.getenv('PACKAGE_NAME_OVERRIDE')
 
         from openapi_python_client import Project
 
