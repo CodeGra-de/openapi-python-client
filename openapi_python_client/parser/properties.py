@@ -291,6 +291,38 @@ _existing_enums: Dict[str, EnumProperty] = {}
 
 
 @dataclass
+class LiteralProperty(Property):
+    """ A property that should use an literal"""
+
+    value: Union[str, bool, int]
+
+    template: ClassVar[str] = "literal_property.pyi"
+
+    def get_type_string(self, no_optional: bool = False) -> str:
+        """ Get a string representation of type that should be used when declaring this property """
+        if isinstance(self.value, str):
+            replaced_value = self.value.replace('"', '\\"')
+            value_as_string = f'"{replaced_value}"'
+        else:
+            value_as_string = self.value
+        if no_optional or (self.required and not self.nullable):
+            return f'Literal[{value_as_string}]'
+        return f'Literal[{value_as_string}, None]'
+
+    def get_imports(self, *, prefix: str) -> Set[str]:
+        """
+        Get a set of import strings that should be included when this property is used somewhere
+
+        Args:
+            prefix: A prefix to put before any relative (local) module names.
+        """
+        return {
+            'from typing_extensions import Literal',
+            *super().get_imports(prefix=prefix),
+        }
+
+
+@dataclass
 class EnumProperty(Property):
     """ A property that should use an enum """
 
@@ -465,6 +497,15 @@ def _property_from_data(
             name=name, required=required, reference=Reference.from_ref(data.ref), default=None, nullable=False,
         )
     if data.enum:
+        if len(data.enum) == 1 and isinstance(data.enum[0], (str, bool, int)):
+            return LiteralProperty(
+                name=name,
+                value=data.enum[0],
+                default=data.default,
+                nullable=data.nullable,
+                required=required,
+            )
+
         return EnumProperty(
             name=name,
             required=required,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from io import StringIO
 from typing import Any, Dict, Optional
 
@@ -63,7 +63,8 @@ class {{ model.reference.class_name }}{% if model.inherits -%}(
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> {{ model.reference.class_name }}:
 {% if model.inherits %}
-        base = {{ model.inherits.class_name }}.from_dict(d).to_dict()
+        base = asdict({{ model.inherits.class_name }}.from_dict(d))
+        base.pop('raw_data')
 {% else %}
         base = {}
 {% endif %}

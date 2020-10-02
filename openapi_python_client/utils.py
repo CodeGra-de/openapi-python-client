@@ -21,7 +21,20 @@ def group_title(value: str) -> str:
 
 
 def snake_case(value: str) -> str:
-    return fix_keywords(stringcase.snakecase(group_title(sanitize(value))))
+    base = stringcase.snakecase(group_title(sanitize(value))).split('_')
+    res = []
+    prev_short = False
+    for item in base:
+        if len(item) == 1 and res:
+            prev_short = True
+            res[-1] += item
+        elif prev_short:
+            prev_short = False
+            res[-1] += item
+        else:
+            prev_short = False
+            res.append(item)
+    return fix_keywords('_'.join(res))
 
 
 def pascal_case(value: str) -> str:

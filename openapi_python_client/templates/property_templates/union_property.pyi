@@ -37,16 +37,12 @@ def _parse_{{ property.python_name }}(data: {% if property.nullable -%}
 {% endmacro %}
 
 {% macro transform(property, source, destination) %}
-{% if not property.required %}
+{% if (not property.required) or property.nullable %}
 if {{ source }} is None:
     {{ destination }}: {{ property.get_type_string() }} = None
 {% endif %}
 {% for inner_property in property.inner_properties %}
-    {% if property.nullable %}
-if {{ source }} is None:
-    {{ destination }} = None
-    {% endif %}
-    {% if loop.first and property.required %}{# No if None statement before this #}
+    {% if loop.first and property.required and not property.nullable %}{# No if None statement before this #}
 if isinstance({{ source }}, {{ inner_property.get_type_string(no_optional=True) }}):
     {% elif not loop.last %}
 elif isinstance({{ source }}, {{ inner_property.get_type_string(no_optional=True) }}):
