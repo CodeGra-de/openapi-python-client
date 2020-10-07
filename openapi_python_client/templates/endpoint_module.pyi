@@ -48,7 +48,7 @@ def {{ endpoint.name | snakecase }}(
     {% endfor %}
     extra_parameters: Mapping[str, str] = None,
 {{ return_type(endpoint) }}
-    """ {{ endpoint.description }} """
+    """{{ endpoint.description }}"""
     url = "{}{{ endpoint.path }}".format(
         client.base_url
         {%- for parameter in endpoint.path_parameters -%}

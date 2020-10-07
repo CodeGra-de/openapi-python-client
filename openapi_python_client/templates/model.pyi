@@ -24,7 +24,7 @@ class {{ model.reference.class_name }}{% if model.inherits -%}(
     Exception
 )
 {%- endif -%}:
-    """ {{ model.description }} """
+    """{{ model.description }}"""
     {% for property in model.required_properties + model.optional_properties %}
     {{ property.to_string() }}
     {% endfor %}
