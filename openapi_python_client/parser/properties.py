@@ -309,6 +309,10 @@ class LiteralProperty(Property):
             return f'Literal[{value_as_string}]'
         return f'Literal[{value_as_string}, None]'
 
+    @property
+    def repr_value(self) -> str:
+        return repr(self.value)
+
     def get_imports(self, *, prefix: str) -> Set[str]:
         """
         Get a set of import strings that should be included when this property is used somewhere

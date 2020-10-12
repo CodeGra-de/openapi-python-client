@@ -1,10 +1,31 @@
+{% macro _construct(property, source) %}
+{% set model = property.reference.lookup() %}
+{% if model.is_union %}
+from . import {{ model.joins[0].reference.module_name }}
+
+err = None
+for opt in [{% for submodel in model.joins %}{{ submodel.reference.module_name }}.{{ submodel.reference.class_name }}, {% endfor %}]:
+    try:
+        {{ property.python_name }} = opt.from_dict(cast(Dict[str, Any], {{ source }}))
+    except Exception as exc:
+        err = exc
+    else:
+        break
+else:
+    raise err
+del err
+{% else %}
+{{ property.python_name }} = {{ property.reference.class_name }}.from_dict(cast(Dict[str, Any], {{ source }}))
+{% endif %}
+{% endmacro %}
+
 {% macro construct(property, source) %}
 {% if property.required %}
-{{ property.python_name }} = {{ property.reference.class_name }}.from_dict({{ source }})
+{{ _construct(property, source) }}
 {% else %}
 {{ property.python_name }} = None
 if {{ source }} is not None:
-    {{ property.python_name }} = {{ property.reference.class_name }}.from_dict(cast(Dict[str, Any], {{ source }}))
+    {{ _construct(property, source) | indent(4) }}
 {% endif %}
 {% endmacro %}
 

@@ -236,7 +236,7 @@ class Model:
     is_union: bool = False
 
     @staticmethod
-    def from_data(*, data: oai.Schema, name: str) -> Union[Model, ParseError]:
+    def from_data(*, data: oai.Schema, name: str, ref: Reference = None) -> Union[Model, ParseError]:
         """ A single Model from its OAI data
 
         Args:
@@ -249,7 +249,7 @@ class Model:
         optional_properties: List[Property] = []
         relative_imports: Set[str] = set()
 
-        ref = Reference.from_ref(data.title or name)
+        ref = ref or Reference.from_ref(data.title or name)
 
         inherits = None
         props = data.properties
@@ -261,7 +261,6 @@ class Model:
             relative_imports.add(f"from .{inherits.module_name} import {inherits.class_name}")
             props = data.allOf[1].properties
         elif not props:
-            breakpoint()
             props = {}
             # raise AssertionError('Found empty property!')
 
@@ -302,11 +301,21 @@ class MyUnion:
         ref = Reference.from_ref(data.title or name)
         name = data.title or name
 
-        return MyUnion(
+        model = MyUnion(
             reference=ref,
-            joins=[Model.from_data(data=opt, name=f'{name}_{idx + 1}') for idx, opt in enumerate(data.anyOf)],
+            joins=[
+                Model.from_data(
+                    data=opt,
+                    name=f'{name}_{idx + 1}',
+                    ref=Reference(
+                        class_name=f'{ref.class_name}{idx + 1}',
+                        module_name=ref.module_name,
+                    ),
+                ) for idx, opt in enumerate(data.anyOf)],
             relative_imports=[]
         )
+        ALL_MODELS[ref] = model
+        return model
 
 @dataclass
 class Schemas:
